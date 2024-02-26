@@ -7,6 +7,7 @@ class Migrater {
   dbTo: Database
   notifier: Notifier
   status: Dict = Object.create(null)
+  filters: Dict = Object.create(null)
   _updateStatus: () => void
 
   constructor(ctx: Context, private config: Migrater.Config) {
@@ -29,11 +30,21 @@ class Migrater {
         this.dbFrom = ctx.database
         this.dbTo = this.ctx.database
         this.ctx.model.tables = ctx.model.tables
-        this.notifier.update(<>
+        this.filters = Object.fromEntries(Object.keys(this.dbFrom.tables).map(key => [key, true]))
+
+        const switchFilter = (key) => {
+          this.filters[key] = !this.filters[key]
+          notify()
+        }
+
+        const notify = () => this.notifier.update(<>
           <p>当前使用的数据库: {this.dbFrom.drivers.default.constructor.name}</p>
           <p>迁移的目标数据库: {this.dbTo.drivers.default.constructor.name}</p>
+          {Object.entries(this.filters).map(([key, value]) => (<p><button onClick={() => switchFilter(key)}>{value ? '已选中' : '未选中'}</button>{key}</p>))}
           <p><button onClick={this.run.bind(this)}>开始迁移</button></p>
         </>)
+
+        notify()
       })
     })
   }
@@ -70,7 +81,8 @@ class Migrater {
 
   async run() {
     const stats = await this.dbFrom.stats()
-    await Promise.all(Object.keys(this.dbFrom.tables).map(async (table: keyof Tables) => {
+    await Promise.all(Object.entries(this.filters).map(async ([table, filter]: [keyof Tables, boolean]) => {
+      if (!filter) return
       await this.migrateTable(table, {
         batchsize: this.config.batchsize,
         count: stats.tables[table].count,
