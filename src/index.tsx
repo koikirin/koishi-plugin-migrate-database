@@ -1,47 +1,51 @@
-import { Context, Database, Dict, Loader, makeArray, Schema, Tables } from 'koishi'
-import { Notifier } from '@koishijs/plugin-notifier'
+import { Context, Database, Dict, Driver, Loader, makeArray, Schema, Tables } from 'koishi'
+import { } from '@koishijs/plugin-notifier'
 
 class Migrater {
   ctx: Context
   dbFrom: Database
   dbTo: Database
-  notifier: Notifier
-  status: Dict = Object.create(null)
-  filters: Dict = Object.create(null)
+
+  _status: Dict<string> = Object.create(null)
+  _filters: Dict<boolean> = Object.create(null)
   _updateStatus: () => void
 
   constructor(ctx: Context, private config: Migrater.Config) {
-    this.notifier = ctx.notifier.create()
+    const notifier = ctx.notifier.create()
 
     ctx.on('ready', async () => {
       try {
         this.ctx = this.setup(ctx)
       } catch {
-        this.notifier.update('目标数据库插件未找到')
+        notifier.update('目标数据库插件未找到')
         return
       }
 
-      this._updateStatus = ctx.debounce(() => {
-        const status = Object.values(this.status).map(x => <p>{x}</p>)
-        this.notifier.update(status)
-      }, 500)
+      this._updateStatus = ctx.throttle(() => {
+        const status = Object.values(this._status).map(x => <p>{x}</p>)
+        notifier.update(status)
+      }, 400)
 
       this.ctx.inject(['database'], async () => {
         this.dbFrom = ctx.database
         this.dbTo = this.ctx.database
         this.ctx.model.tables = ctx.model.tables
-        this.filters = Object.fromEntries(Object.keys(this.dbFrom.tables).map(key => [key, true]))
+        this._filters = Object.fromEntries(Object.keys(this.dbFrom.tables).map(key => [key, true]))
 
-        const switchFilter = (key) => {
-          this.filters[key] = !this.filters[key]
+        const stats = await this.dbFrom.stats()
+        const switchFilter = (key: string) => {
+          this._filters[key] = !this._filters[key]
           notify()
         }
-
-        const notify = () => this.notifier.update(<>
+        const notify = () => notifier.update(<>
           <p>当前使用的数据库: {this.dbFrom.drivers.default.constructor.name}</p>
           <p>迁移的目标数据库: {this.dbTo.drivers.default.constructor.name}</p>
-          {Object.entries(this.filters).map(([key, value]) => (<p><button onClick={() => switchFilter(key)}>{value ? '已选中' : '未选中'}</button>{key}</p>))}
-          <p><button onClick={this.run.bind(this)}>开始迁移</button></p>
+          {Object.entries(this._filters).map(([key, value]) => (
+            <p><button type={value ? 'success' : 'default'} onClick={() => switchFilter(key)}>
+              {value ? '已选中' : '未选中'}
+            </button> {key} ({stats.tables[key].count})</p>
+          ))}
+          <p><button type="primary" onClick={this.run.bind(this, stats)}>开始迁移</button></p>
         </>)
 
         notify()
@@ -65,36 +69,40 @@ class Migrater {
   }) {
     const model = this.dbFrom.tables[table]
     for (let i = 0; i < options.count; i += options.batchsize) {
-      this.updateStatus(table, `- ${table} (${i}/${options.count})`)
+      this.updateStatus(table, `- ${table} (${i} / ${options.count})`)
       let sel = this.dbFrom.select(table)
       makeArray(model.primary).forEach(key => sel = sel.orderBy(key))
       const batch = await sel.limit(options.batchsize).offset(i).execute()
       await this.dbTo.upsert(table, batch)
     }
-    this.updateStatus(table, `√ ${table} (${options.count})`)
+    this.updateStatus(table, `✅ ${table} (${options.count})`)
   }
 
-  updateStatus(table, content) {
-    this.status[table] = content
+  updateStatus(table: string, content: string) {
+    this._status[table] = content
     this._updateStatus()
   }
 
-  async run() {
-    const stats = await this.dbFrom.stats()
-    await Promise.all(Object.entries(this.filters).map(async ([table, filter]: [keyof Tables, boolean]) => {
+  async run(stats: Driver.Stats) {
+    await Promise.all(Object.entries(this._filters).map(async ([table, filter]: [keyof Tables, boolean]) => {
       if (!filter) return
-      await this.migrateTable(table, {
-        batchsize: this.config.batchsize,
-        count: stats.tables[table].count,
-      })
+      try {
+        await this.migrateTable(table, {
+          batchsize: this.config.batchsize,
+          count: stats.tables[table].count,
+        })
+      } catch (e) {
+        this.ctx.logger.warn(e)
+        this.updateStatus(table, `❌ ${table} (Error: ${e})`)
+      }
     }))
-    this.updateStatus('', '迁移完成')
+    this.updateStatus('', '迁移完成，请关闭此插件')
   }
 }
 
 namespace Migrater {
-  export const usage = '将本插件与要迁移的目标数据库插件放在同一分组内。启用本插件即开始迁移。'
-
+  export const usage = '将本插件与要迁移的目标数据库插件放在同一分组内。启用本插件跟随指引开始迁移。'
+  export const filter = false
   export const inject = ['database', 'notifier']
 
   export interface Config {
