@@ -2,6 +2,8 @@ import { Context, Database, Dict, Driver, Loader, makeArray, Schema, Tables } fr
 import { } from '@koishijs/plugin-notifier'
 
 class Migrater {
+  static name = 'migrate-database'
+
   ctx: Context
   dbFrom: Database
   dbTo: Database
@@ -31,6 +33,8 @@ class Migrater {
         this.dbTo = this.ctx.database
         this.ctx.model.tables = ctx.model.tables
         this._filters = Object.fromEntries(Object.keys(this.dbFrom.tables).map(key => [key, true]))
+        this.ctx.database.refresh()
+        await this.ctx.database.prepared()
 
         const stats = await this.dbFrom.stats()
         const switchFilter = (key: string) => {
