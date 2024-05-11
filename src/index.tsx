@@ -1,12 +1,12 @@
-import { Context, Database, Dict, Driver, Loader, makeArray, Schema, Tables } from 'koishi'
+import { Context, Database, Dict, Driver, Loader, makeArray, mapValues, Schema, Tables } from 'koishi'
 import { } from '@koishijs/plugin-notifier'
 
 class Migrater {
   static name = 'migrate-database'
 
   ctx: Context
-  dbFrom: Database
-  dbTo: Database
+  dbFrom: Database<Tables>
+  dbTo: Database<Tables>
 
   _status: Dict<string> = Object.create(null)
   _filters: Dict<boolean> = Object.create(null)
@@ -31,7 +31,11 @@ class Migrater {
       this.ctx.inject(['database'], async () => {
         this.dbFrom = ctx.database
         this.dbTo = this.ctx.database
-        this.ctx.model.tables = ctx.model.tables
+        this.ctx.model.tables = mapValues(ctx.model.tables, (model) => {
+          const model2 = Object.create(model)
+          model2.ctx = this.ctx
+          return model2
+        })
         this._filters = Object.fromEntries(Object.keys(this.dbFrom.tables).map(key => [key, true]))
         this.ctx.database.refresh()
         await this.ctx.database.prepared()
@@ -42,8 +46,8 @@ class Migrater {
           notify()
         }
         const notify = () => notifier.update(<>
-          <p>当前使用的数据库: {this.dbFrom.drivers.default.constructor.name}</p>
-          <p>迁移的目标数据库: {this.dbTo.drivers.default.constructor.name}</p>
+          <p>当前使用的数据库: {Object.values(this.dbFrom.drivers)[0].constructor.name}</p>
+          <p>迁移的目标数据库: {Object.values(this.dbTo.drivers)[0].constructor.name}</p>
           {Object.entries(this._filters).map(([key, value]) => (
             <p><button type={value ? 'success' : 'default'} onClick={() => switchFilter(key)}>
               {value ? '已选中' : '未选中'}
@@ -58,11 +62,13 @@ class Migrater {
   }
 
   setup(_ctx: Context) {
+    class Database2 extends Database { }
+
     const key = Object.keys(_ctx.scope.parent.config).find(key => key.includes('database-'))
     const config = _ctx.scope.parent.config[key]
     const ctx = _ctx.isolate('model').isolate('database')
     ctx.scope[Loader.kRecord] = ctx.root.scope[Loader.kRecord]
-    ctx.plugin(Database)
+    ctx.plugin(Database2)
     ctx.loader.reload(ctx, key.slice(1, key.lastIndexOf(':')), config)
     return ctx
   }
@@ -75,7 +81,7 @@ class Migrater {
     for (let i = 0; i < options.count; i += options.batchsize) {
       this.updateStatus(table, `- ${table} (${i} / ${options.count})`)
       let sel = this.dbFrom.select(table)
-      makeArray(model.primary).forEach(key => sel = sel.orderBy(key))
+      makeArray(model.primary).forEach(key => sel = sel.orderBy(key as any))
       const batch = await sel.limit(options.batchsize).offset(i).execute()
       await this.dbTo.upsert(table, batch)
     }
@@ -114,7 +120,7 @@ namespace Migrater {
   }
 
   export const Config: Schema<Config> = Schema.object({
-    batchsize: Schema.number().default(1000),
+    batchsize: Schema.natural().default(1000),
   })
 }
 
