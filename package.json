@@ -24,5 +24,8 @@
   ],
   "peerDependencies": {
     "koishi": "^4.17.5"
+  },
+  "dependencies": {
+    "@satorijs/element": "^3.1.7"
   }
 }
