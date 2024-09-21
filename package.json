@@ -1,7 +1,7 @@
 {
   "name": "koishi-plugin-migrate-database",
   "description": "Migrate to new database",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "main": "lib/index.js",
   "typings": "lib/index.d.ts",
   "files": [
@@ -27,5 +27,11 @@
   },
   "dependencies": {
     "@satorijs/element": "^3.1.7"
+  },
+  "koishi": {
+    "description": {
+      "en": "Migrate to new database",
+      "zh": "迁移数据库"
+    }
   }
 }
